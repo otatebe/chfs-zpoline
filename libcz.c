@@ -122,6 +122,8 @@ dup_internal(int oldfd, int newfd)
 	}
 	fd_list[newfd].fd = oldfd;
 	++fd_list[oldfd].ref;
+	_DEBUG(printf("dup(%d, %d)\n", oldfd, newfd));
+	_DEBUG(fflush(stdout));
 	return (newfd);
 }
 
@@ -175,13 +177,24 @@ is_chfs_fd(int *fd)
 	return (1);
 }
 
+static int
+hook_ret(int ret)
+{
+	if (ret == -1) {
+		if (errno > 0)
+			return (-errno);
+		return (-1);
+	}
+	return (ret);
+}
+
 static long
 hook_dup(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int oldfd = a2;
 
 	if (is_chfs_fd(&oldfd))
-		return (dup_fd(oldfd, 0));
+		return (hook_ret(dup_fd(oldfd, 0)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -192,7 +205,7 @@ hook_dup2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int newfd = a3;
 
 	if (is_chfs_fd(&oldfd))
-		return (dup2_fd(oldfd, newfd));
+		return (hook_ret(dup2_fd(oldfd, newfd)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -207,7 +220,7 @@ hook_fcntl(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		switch (op) {
 		case F_DUPFD:
 		case F_DUPFD_CLOEXEC:
-			return (dup_fd(fd, arg));
+			return (hook_ret(dup_fd(fd, arg)));
 		}
 		return (0);
 	}
@@ -224,8 +237,8 @@ hook_open_internal(const char *path, int flags, mode_t mode)
 	else
 		ret = chfs_open(path, flags);
 	if (ret < 0)
-		return (ret);
-	return (dup_fd(ret, 0));
+		return (hook_ret(ret));
+	return (hook_ret(dup_fd(ret, 0)));
 }
 
 static long
@@ -268,7 +281,7 @@ hook_read(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	size_t count = (size_t)a4;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_read(fd, buf, count));
+		return (hook_ret(chfs_read(fd, buf, count)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -280,7 +293,7 @@ hook_write(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	size_t count = (size_t)a4;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_write(fd, buf, count));
+		return (hook_ret(chfs_write(fd, buf, count)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -292,7 +305,7 @@ hook_stat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_stat(path, st));
+		return (hook_ret(chfs_stat(path, st)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -306,7 +319,7 @@ hook_pread64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t offset = (off_t)a5;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_pread(fd, buf, count, offset));
+		return (hook_ret(chfs_pread(fd, buf, count, offset)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -319,7 +332,7 @@ hook_pwrite64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t offset = (off_t)a5;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_pwrite(fd, buf, count, offset));
+		return (hook_ret(chfs_pwrite(fd, buf, count, offset)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -331,7 +344,7 @@ hook_access(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_access(path, mode));
+		return (hook_ret(chfs_access(path, mode)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -343,7 +356,7 @@ hook_unlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_unlink(path));
+		return (hook_ret(chfs_unlink(path)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -356,7 +369,7 @@ hook_symlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(target)) {
 		SKIP_DIR(target);
-		return (chfs_symlink(target, linkpath));
+		return (hook_ret(chfs_symlink(target, linkpath)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -370,7 +383,7 @@ hook_readlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_readlink(path, buf, bufsize));
+		return (hook_ret(chfs_readlink(path, buf, bufsize)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -423,9 +436,9 @@ hook_chdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		ret = chfs_chdir(path);
 		if (ret == 0)
 			is_cwd_chfs = 1;
-		return (ret);
+		return (hook_ret(ret));
 	} else if (path != NULL && path[0] != '/' && is_cwd_chfs)
-		return (chfs_chdir(path));
+		return (hook_ret(chfs_chdir(path)));
 	is_cwd_chfs = 0;
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -439,7 +452,7 @@ hook_fchdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		ret = chfs_fchdir(fd);
 		if (ret == 0)
 			is_cwd_chfs = 1;
-		return (ret);
+		return (hook_ret(ret));
 	}
 	is_cwd_chfs = 0;
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -480,7 +493,7 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_mkdir(path, mode));
+		return (hook_ret(chfs_mkdir(path, mode)));
 	} else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
@@ -488,7 +501,7 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		if (p != NULL) {
 			ret = chfs_mkdir(p, mode);
 			free(p);
-			return (ret);
+			return (hook_ret(ret));
 		}
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -498,8 +511,8 @@ static int
 hook_unlinkat_internal(const char *path, int flags)
 {
 	if (flags & AT_REMOVEDIR)
-		return (chfs_rmdir(path));
-	return (chfs_unlink(path));
+		return (hook_ret(chfs_rmdir(path)));
+	return (hook_ret(chfs_unlink(path)));
 }
 
 static long
@@ -533,7 +546,7 @@ hook_lseek(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int whence = (int)a4;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_seek(fd, offset, whence));
+		return (hook_ret(chfs_seek(fd, offset, whence)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -543,7 +556,7 @@ hook_fsync(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_fsync(fd));
+		return (hook_ret(chfs_fsync(fd)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -555,7 +568,7 @@ hook_truncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_truncate(path, length));
+		return (hook_ret(chfs_truncate(path, length)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -567,7 +580,7 @@ hook_ftruncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t length = (off_t)a3;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_ftruncate(fd, length));
+		return (hook_ret(chfs_ftruncate(fd, length)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -578,7 +591,7 @@ hook_fstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	struct stat *st = (struct stat *)a3;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_fstat(fd, st));
+		return (hook_ret(chfs_fstat(fd, st)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -590,7 +603,7 @@ hook_lstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_stat(path, st));
+		return (hook_ret(chfs_stat(path, st)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -603,7 +616,7 @@ hook_mkdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_mkdir(path, mode));
+		return (hook_ret(chfs_mkdir(path, mode)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -615,7 +628,7 @@ hook_rmdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_rmdir(path));
+		return (hook_ret(chfs_rmdir(path)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -631,8 +644,8 @@ hook_creat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		SKIP_DIR(path);
 		ret = chfs_create(path, O_CREAT|O_WRONLY|O_TRUNC, mode);
 		if (ret < 0)
-			return (ret);
-		return (dup_fd(ret, 0));
+			return (hook_ret(ret));
+		return (hook_ret(dup_fd(ret, 0)));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -686,7 +699,7 @@ hook_notsupp_path(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -700,7 +713,7 @@ hook_notsupp_path2(long a1, long a2, long a3, long a4, long a5, long a6,
 
 	if (IS_CHFS(path1) || IS_CHFS(path2)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -712,7 +725,7 @@ hook_notsupp_fd(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -724,7 +737,7 @@ hook_notsupp_fd2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -737,12 +750,12 @@ hook_notsupp_at(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	} else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -757,13 +770,13 @@ hook_notsupp_at2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path1) || IS_CHFS(path2)) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	} else if ((path1[0] != '/' &&
 		((fd1 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd1))) ||
 		(path2[0] != '/' &&
 		((fd2 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd2)))) {
 		hook_disp_notsupp(a1);
-		return (-1);
+		return (-ENOTSUP);
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -776,7 +789,7 @@ hook_getdents64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	ssize_t count = a4;
 
 	if (is_chfs_fd(&fd))
-		return (chfs_linux_getdents64(fd, dirp, count));
+		return (hook_ret(chfs_linux_getdents64(fd, dirp, count)));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -791,25 +804,25 @@ hook_newfstatat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (chfs_stat(path, buf));
+		return (hook_ret(chfs_stat(path, buf)));
 	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
 			if (fd == AT_FDCWD && is_cwd_chfs) {
 				p = chfs_path_at(AT_FDCWD, "");
 				if (p == NULL)
-					return (-1);
+					return (-errno);
 				ret = chfs_stat(p, buf);
 				free(p);
-				return (ret);
+				return (hook_ret(ret));
 			}
-			return (chfs_fstat(fd, buf));
+			return (hook_ret(chfs_fstat(fd, buf)));
 		}
 		p = chfs_path_at(fd, path);
 		if (p == NULL)
-			return (-1);
+			return (-errno);
 		ret = chfs_stat(p, buf);
 		free(p);
-		return (ret);
+		return (hook_ret(ret));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -853,7 +866,7 @@ hook_statx_internal(const char *path, struct statx *sx)
 
 	ret = chfs_stat(path, &sb);
 	if (ret < 0)
-		return (ret);
+		return (hook_ret(ret));
 	hook_copy_statx(sx, &sb);
 	return (ret);
 }
@@ -876,20 +889,20 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 			if (fd == AT_FDCWD && is_cwd_chfs) {
 				p = chfs_path_at(AT_FDCWD, "");
 				if (p == NULL)
-					return (-1);
+					return (-errno);
 				ret = hook_statx_internal(p, sx);
 				free(p);
 				return (ret);
 			}
 			ret = chfs_fstat(fd, &sb);
 			if (ret < 0)
-				return (ret);
+				return (hook_ret(ret));
 			hook_copy_statx(sx, &sb);
 			return (ret);
 		}
 		p = chfs_path_at(fd, path);
 		if (p == NULL)
-			return (-1);
+			return (-errno);
 		ret = hook_statx_internal(p, sx);
 		free(p);
 		return (ret);
