@@ -46,7 +46,7 @@ static long next_sys_call(long a1, long a2, long a3, long a4, long a5,
 #define CHFS_DIR	"/chfs"
 #define CHFS_LEN	5
 #ifdef DEBUG
-#define IS_CHFS(p)	(printf("path[%d]=%s\n", getpid(), p), \
+#define IS_CHFS(p)	(printf("path[%d] = %s\n", getpid(), p), \
 				strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
 				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/'))
 #else
@@ -178,13 +178,13 @@ is_chfs_fd(int *fd)
 }
 
 static int
-hook_ret(int ret)
+hook_ret(int ret, long a1)
 {
-	if (ret == -1) {
-		if (errno > 0)
-			return (-errno);
-		return (-1);
-	}
+	if (ret == -1 && errno > 0)
+		ret = -errno;
+	_DEBUG(printf("chfs[%d]: %s = %d %s\n", getpid(), syscall_string(a1),
+		ret, ret < 0 ? strerror(-ret) : ""));
+	_DEBUG(fflush(stdout));
 	return (ret);
 }
 
@@ -194,7 +194,7 @@ hook_dup(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int oldfd = a2;
 
 	if (is_chfs_fd(&oldfd))
-		return (hook_ret(dup_fd(oldfd, 0)));
+		return (hook_ret(dup_fd(oldfd, 0), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -205,7 +205,7 @@ hook_dup2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int newfd = a3;
 
 	if (is_chfs_fd(&oldfd))
-		return (hook_ret(dup2_fd(oldfd, newfd)));
+		return (hook_ret(dup2_fd(oldfd, newfd), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -220,7 +220,7 @@ hook_fcntl(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		switch (op) {
 		case F_DUPFD:
 		case F_DUPFD_CLOEXEC:
-			return (hook_ret(dup_fd(fd, arg)));
+			return (hook_ret(dup_fd(fd, arg), a1));
 		}
 		return (0);
 	}
@@ -228,7 +228,7 @@ hook_fcntl(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static int
-hook_open_internal(const char *path, int flags, mode_t mode)
+hook_open_internal(const char *path, int flags, mode_t mode, long a1)
 {
 	int ret;
 
@@ -237,8 +237,8 @@ hook_open_internal(const char *path, int flags, mode_t mode)
 	else
 		ret = chfs_open(path, flags);
 	if (ret < 0)
-		return (hook_ret(ret));
-	return (hook_ret(dup_fd(ret, 0)));
+		return (hook_ret(ret, a1));
+	return (hook_ret(dup_fd(ret, 0), a1));
 }
 
 static long
@@ -250,7 +250,7 @@ hook_open(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_open_internal(path, flags, mode));
+		return (hook_open_internal(path, flags, mode, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -268,7 +268,7 @@ hook_close(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		if (--fd_list[fd2].ref == 0)
 			chfs_close(fd2);
 		_ASSERT(fd_list[fd2].ref >= 0);
-		return (0);
+		return (hook_ret(0, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -281,7 +281,7 @@ hook_read(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	size_t count = (size_t)a4;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_read(fd, buf, count)));
+		return (hook_ret(chfs_read(fd, buf, count), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -293,7 +293,7 @@ hook_write(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	size_t count = (size_t)a4;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_write(fd, buf, count)));
+		return (hook_ret(chfs_write(fd, buf, count), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -305,7 +305,7 @@ hook_stat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_stat(path, st)));
+		return (hook_ret(chfs_stat(path, st), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -319,7 +319,7 @@ hook_pread64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t offset = (off_t)a5;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_pread(fd, buf, count, offset)));
+		return (hook_ret(chfs_pread(fd, buf, count, offset), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -332,7 +332,7 @@ hook_pwrite64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t offset = (off_t)a5;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_pwrite(fd, buf, count, offset)));
+		return (hook_ret(chfs_pwrite(fd, buf, count, offset), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -344,7 +344,7 @@ hook_access(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_access(path, mode)));
+		return (hook_ret(chfs_access(path, mode), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -356,7 +356,7 @@ hook_unlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_unlink(path)));
+		return (hook_ret(chfs_unlink(path), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -369,7 +369,7 @@ hook_symlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(target)) {
 		SKIP_DIR(target);
-		return (hook_ret(chfs_symlink(target, linkpath)));
+		return (hook_ret(chfs_symlink(target, linkpath), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -383,7 +383,7 @@ hook_readlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_readlink(path, buf, bufsize)));
+		return (hook_ret(chfs_readlink(path, buf, bufsize), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -436,9 +436,9 @@ hook_chdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		ret = chfs_chdir(path);
 		if (ret == 0)
 			is_cwd_chfs = 1;
-		return (hook_ret(ret));
+		return (hook_ret(ret, a1));
 	} else if (path != NULL && path[0] != '/' && is_cwd_chfs)
-		return (hook_ret(chfs_chdir(path)));
+		return (hook_ret(chfs_chdir(path), a1));
 	is_cwd_chfs = 0;
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -452,7 +452,7 @@ hook_fchdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		ret = chfs_fchdir(fd);
 		if (ret == 0)
 			is_cwd_chfs = 1;
-		return (hook_ret(ret));
+		return (hook_ret(ret, a1));
 	}
 	is_cwd_chfs = 0;
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -469,13 +469,13 @@ hook_openat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_open_internal(path, flags, mode));
+		return (hook_open_internal(path, flags, mode, a1));
 	} else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		p = chfs_path_at(fd, path);
 		if (p != NULL) {
-			ret = hook_open_internal(p, flags, mode);
+			ret = hook_open_internal(p, flags, mode, a1);
 			free(p);
 			return (ret);
 		}
@@ -493,7 +493,7 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_mkdir(path, mode)));
+		return (hook_ret(chfs_mkdir(path, mode), a1));
 	} else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
@@ -501,18 +501,18 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		if (p != NULL) {
 			ret = chfs_mkdir(p, mode);
 			free(p);
-			return (hook_ret(ret));
+			return (hook_ret(ret, a1));
 		}
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
 static int
-hook_unlinkat_internal(const char *path, int flags)
+hook_unlinkat_internal(const char *path, int flags, long a1)
 {
 	if (flags & AT_REMOVEDIR)
-		return (hook_ret(chfs_rmdir(path)));
-	return (hook_ret(chfs_unlink(path)));
+		return (hook_ret(chfs_rmdir(path), a1));
+	return (hook_ret(chfs_unlink(path), a1));
 }
 
 static long
@@ -524,13 +524,13 @@ hook_unlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_unlinkat_internal(path, flags));
+		return (hook_unlinkat_internal(path, flags, a1));
 	} else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		p = chfs_path_at(fd, path);
 		if (p != NULL) {
-			ret = hook_unlinkat_internal(p, flags);
+			ret = hook_unlinkat_internal(p, flags, a1);
 			free(p);
 			return (ret);
 		}
@@ -546,7 +546,7 @@ hook_lseek(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int whence = (int)a4;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_seek(fd, offset, whence)));
+		return (hook_ret(chfs_seek(fd, offset, whence), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -556,7 +556,7 @@ hook_fsync(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_fsync(fd)));
+		return (hook_ret(chfs_fsync(fd), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -568,7 +568,7 @@ hook_truncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_truncate(path, length)));
+		return (hook_ret(chfs_truncate(path, length), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -580,7 +580,7 @@ hook_ftruncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t length = (off_t)a3;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_ftruncate(fd, length)));
+		return (hook_ret(chfs_ftruncate(fd, length), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -591,7 +591,7 @@ hook_fstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	struct stat *st = (struct stat *)a3;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_fstat(fd, st)));
+		return (hook_ret(chfs_fstat(fd, st), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -603,7 +603,7 @@ hook_lstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_stat(path, st)));
+		return (hook_ret(chfs_stat(path, st), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -616,7 +616,7 @@ hook_mkdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_mkdir(path, mode)));
+		return (hook_ret(chfs_mkdir(path, mode), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -628,7 +628,7 @@ hook_rmdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_rmdir(path)));
+		return (hook_ret(chfs_rmdir(path), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -644,8 +644,8 @@ hook_creat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		SKIP_DIR(path);
 		ret = chfs_create(path, O_CREAT|O_WRONLY|O_TRUNC, mode);
 		if (ret < 0)
-			return (hook_ret(ret));
-		return (hook_ret(dup_fd(ret, 0)));
+			return (hook_ret(ret, a1));
+		return (hook_ret(dup_fd(ret, 0), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -656,7 +656,7 @@ hook_nop_path(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *path = (char *)a2;
 
 	if (IS_CHFS(path))
-		return (0);
+		return (hook_ret(0, a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -666,7 +666,7 @@ hook_nop_fd(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 
 	if (is_chfs_fd(&fd))
-		return (0);
+		return (hook_ret(0, a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -677,11 +677,11 @@ hook_nop_at(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *path = (char *)a3;
 
 	if (IS_CHFS(path))
-		return (0);
+		return (hook_ret(0, a1));
 	else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd))
-		return (0);
+		return (hook_ret(0, a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -699,7 +699,7 @@ hook_notsupp_path(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -713,7 +713,7 @@ hook_notsupp_path2(long a1, long a2, long a3, long a4, long a5, long a6,
 
 	if (IS_CHFS(path1) || IS_CHFS(path2)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -725,7 +725,7 @@ hook_notsupp_fd(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -737,7 +737,7 @@ hook_notsupp_fd2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -750,12 +750,12 @@ hook_notsupp_at(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	} else if (path[0] == '/')
 		;
 	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -770,13 +770,13 @@ hook_notsupp_at2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path1) || IS_CHFS(path2)) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	} else if ((path1[0] != '/' &&
 		((fd1 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd1))) ||
 		(path2[0] != '/' &&
 		((fd2 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd2)))) {
 		hook_disp_notsupp(a1);
-		return (-ENOTSUP);
+		return (hook_ret(-ENOTSUP, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -789,7 +789,7 @@ hook_getdents64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	ssize_t count = a4;
 
 	if (is_chfs_fd(&fd))
-		return (hook_ret(chfs_linux_getdents64(fd, dirp, count)));
+		return (hook_ret(chfs_linux_getdents64(fd, dirp, count), a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
 
@@ -804,25 +804,25 @@ hook_newfstatat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_ret(chfs_stat(path, buf)));
+		return (hook_ret(chfs_stat(path, buf), a1));
 	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
 			if (fd == AT_FDCWD && is_cwd_chfs) {
 				p = chfs_path_at(AT_FDCWD, "");
 				if (p == NULL)
-					return (-errno);
+					return (hook_ret(-1, a1));
 				ret = chfs_stat(p, buf);
 				free(p);
-				return (hook_ret(ret));
+				return (hook_ret(ret, a1));
 			}
-			return (hook_ret(chfs_fstat(fd, buf)));
+			return (hook_ret(chfs_fstat(fd, buf), a1));
 		}
 		p = chfs_path_at(fd, path);
 		if (p == NULL)
-			return (-errno);
+			return (hook_ret(-1, a1));
 		ret = chfs_stat(p, buf);
 		free(p);
-		return (hook_ret(ret));
+		return (hook_ret(ret, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -859,16 +859,16 @@ hook_copy_statx(struct statx *sx, struct stat *sb)
 }
 
 static long
-hook_statx_internal(const char *path, struct statx *sx)
+hook_statx_internal(const char *path, struct statx *sx, long a1)
 {
 	struct stat sb;
 	int ret;
 
 	ret = chfs_stat(path, &sb);
 	if (ret < 0)
-		return (hook_ret(ret));
+		return (hook_ret(ret, a1));
 	hook_copy_statx(sx, &sb);
-	return (ret);
+	return (hook_ret(ret, a1));
 }
 
 static long
@@ -883,27 +883,27 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		SKIP_DIR(path);
-		return (hook_statx_internal(path, sx));
+		return (hook_statx_internal(path, sx, a1));
 	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
 			if (fd == AT_FDCWD && is_cwd_chfs) {
 				p = chfs_path_at(AT_FDCWD, "");
 				if (p == NULL)
-					return (-errno);
-				ret = hook_statx_internal(p, sx);
+					return (hook_ret(-1, a1));
+				ret = hook_statx_internal(p, sx, a1);
 				free(p);
 				return (ret);
 			}
 			ret = chfs_fstat(fd, &sb);
 			if (ret < 0)
-				return (hook_ret(ret));
+				return (hook_ret(ret, a1));
 			hook_copy_statx(sx, &sb);
-			return (ret);
+			return (hook_ret(ret, a1));
 		}
 		p = chfs_path_at(fd, path);
 		if (p == NULL)
-			return (-errno);
-		ret = hook_statx_internal(p, sx);
+			return (hook_ret(-1, a1));
+		ret = hook_statx_internal(p, sx, a1);
 		free(p);
 		return (ret);
 	}
@@ -935,7 +935,7 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_lseek:
 		return (hook_lseek(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_ioctl:
-		return (hook_nop_fd(a1, a2, a3, a4, a5, a6, a7));
+		return (hook_notsupp_fd(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_pread64:
 		return (hook_pread64(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_pwrite64:
