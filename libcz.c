@@ -688,8 +688,8 @@ hook_nop_at(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 static void
 hook_disp_notsupp(long a1)
 {
-	fprintf(stderr, "Not supported: %s\n", syscall_string(a1));
-	fflush(stderr);
+	_DEBUG(fprintf(stderr, "Not supported: %s\n", syscall_string(a1)));
+	_DEBUG(fflush(stderr));
 }
 
 static long
