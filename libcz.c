@@ -45,15 +45,17 @@ static long next_sys_call(long a1, long a2, long a3, long a4, long a5,
 
 #define CHFS_DIR	"/chfs"
 #define CHFS_LEN	5
+#define SKIP_DIR(p)	(p += CHFS_LEN)
 #ifdef DEBUG
 #define IS_CHFS(p)	(printf("path[%d] = %s\n", getpid(), p), \
-				strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
-				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/'))
+				((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
+				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/') && \
+				SKIP_DIR(p)) || p[0] != '/'))
 #else
-#define IS_CHFS(p)	(strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
-				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/'))
+#define IS_CHFS(p)	((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
+				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/') && \
+				SKIP_DIR(p)) || p[0] != '/')
 #endif
-#define SKIP_DIR(p)	(p += CHFS_LEN)
 
 /* file descriptors opened by dup2 */
 static struct {
@@ -249,7 +251,6 @@ hook_open(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	mode_t mode = (mode_t)a4;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_open_internal(path, flags, mode, a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -304,7 +305,6 @@ hook_stat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	struct stat *st = (struct stat *)a3;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_stat(path, st), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -343,7 +343,6 @@ hook_access(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int mode = (int)a3;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_access(path, mode), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -355,7 +354,6 @@ hook_unlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *path = (char *)a2;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_unlink(path), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -368,7 +366,6 @@ hook_symlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *linkpath = (char *)a3;
 
 	if (IS_CHFS(target)) {
-		SKIP_DIR(target);
 		return (hook_ret(chfs_symlink(target, linkpath), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -382,7 +379,6 @@ hook_readlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	size_t bufsize = (size_t)a4;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_readlink(path, buf, bufsize), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -432,7 +428,6 @@ hook_chdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		ret = chfs_chdir(path);
 		if (ret == 0)
 			is_cwd_chfs = 1;
@@ -468,7 +463,6 @@ hook_openat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_open_internal(path, flags, mode, a1));
 	} else if (path[0] == '/')
 		;
@@ -492,7 +486,6 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_mkdir(path, mode), a1));
 	} else if (path[0] == '/')
 		;
@@ -523,7 +516,6 @@ hook_unlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int flags = (int)a4, ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_unlinkat_internal(path, flags, a1));
 	} else if (path[0] == '/')
 		;
@@ -567,7 +559,6 @@ hook_truncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	off_t length = (off_t)a3;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_truncate(path, length), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -602,7 +593,6 @@ hook_lstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	struct stat *st = (struct stat *)a3;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_stat(path, st), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -615,7 +605,6 @@ hook_mkdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	mode_t mode = (mode_t)a3;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_mkdir(path, mode), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -627,7 +616,6 @@ hook_rmdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *path = (char *)a2;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_rmdir(path), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
@@ -641,7 +629,6 @@ hook_creat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		ret = chfs_create(path, O_CREAT|O_WRONLY|O_TRUNC, mode);
 		if (ret < 0)
 			return (hook_ret(ret, a1));
@@ -803,7 +790,6 @@ hook_newfstatat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_ret(chfs_stat(path, buf), a1));
 	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
@@ -882,7 +868,6 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int ret;
 
 	if (IS_CHFS(path)) {
-		SKIP_DIR(path);
 		return (hook_statx_internal(path, sx, a1));
 	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
