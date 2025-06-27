@@ -43,6 +43,8 @@ static long next_sys_call(long a1, long a2, long a3, long a4, long a5,
 	return (ret);
 }
 
+static int is_cwd_chfs = 1;
+
 #define CHFS_DIR	"/chfs"
 #define CHFS_LEN	5
 #define SKIP_DIR(p)	(p += CHFS_LEN)
@@ -50,11 +52,11 @@ static long next_sys_call(long a1, long a2, long a3, long a4, long a5,
 #define IS_CHFS(p)	(printf("path[%d] = %s\n", getpid(), p), \
 				((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
 				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/') && \
-				SKIP_DIR(p)) || p[0] != '/'))
+				SKIP_DIR(p)) || (is_cwd_chfs && p[0] != '/')))
 #else
 #define IS_CHFS(p)	((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
 				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/') && \
-				SKIP_DIR(p)) || p[0] != '/')
+				SKIP_DIR(p)) || (is_cwd_chfs && p[0] != '/'))
 #endif
 
 /* file descriptors opened by dup2 */
@@ -383,8 +385,6 @@ hook_readlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
-
-static int is_cwd_chfs = 0;
 
 static long
 hook_getcwd(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
