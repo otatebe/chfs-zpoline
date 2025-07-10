@@ -49,15 +49,64 @@ static int is_cwd_chfs = 1;
 #define CHFS_LEN	5
 #define SKIP_DIR(p)	(p += CHFS_LEN)
 #ifdef DEBUG
-#define IS_CHFS(p)	(printf("path[%d] = %s\n", getpid(), p), \
+#define IS_CHFS_DFT(p)	(printf("path[%d] = %s\n", getpid(), p), \
 				((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
 				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/') && \
 				SKIP_DIR(p)) || (is_cwd_chfs && p[0] != '/')))
 #else
-#define IS_CHFS(p)	((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
+#define IS_CHFS_DFT(p)	((strncmp(p, CHFS_DIR, CHFS_LEN) == 0 && \
 				(p[CHFS_LEN] == '\0' || p[CHFS_LEN] == '/') && \
 				SKIP_DIR(p)) || (is_cwd_chfs && p[0] != '/'))
 #endif
+
+#define MAX_HOOK_DIR_LEN	10
+static char *hook_dir[MAX_HOOK_DIR_LEN] = { NULL };
+static int hook_dir_len = 0;
+
+char *canonical_path(const char *);
+
+static void
+hook_init()
+{
+	char *dirs = getenv("LIBZPDIRS"), *d;
+	int i = 0;
+
+	if (dirs == NULL)
+		return;
+	d = strtok(dirs, " ");
+	if (d == NULL)
+		return;
+	do
+		hook_dir[i++] = canonical_path(d);
+	while (i < MAX_HOOK_DIR_LEN && (d = strtok(NULL, " ")));
+	hook_dir_len = i;
+#ifdef DEBUG
+	for (i = 0; i < hook_dir_len; ++i)
+		printf("hook dir[%d] = %s\n", i, hook_dir[i]);
+#endif
+}
+
+static int
+is_chfs_path(char *path)
+{
+	int i;
+
+	if (path == NULL)
+		return (0);
+	_DEBUG(printf("path[%d] = %s\n", getpid(), path));
+	if (path[0] != '/')
+		return (is_cwd_chfs);
+	for (i = 0; i < hook_dir_len; ++i) {
+		int len = strlen(hook_dir[i]);
+
+		if (strncmp(&path[1], hook_dir[i], len) == 0 &&
+			(path[len + 1] == '\0' || path[len + 1] == '/'))
+			return (1);
+	}
+	return (0);
+}
+
+#define IS_CHFS(p)	(hook_dir_len == 0 ? IS_CHFS_DFT(p) : is_chfs_path(p))
 
 /* file descriptors opened by dup2 */
 static struct {
@@ -351,6 +400,33 @@ hook_access(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_faccessat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int dirfd = (int)a2;
+	char *path = (char *)a3, *p;
+	int mode = (int)a4;
+#if 0
+	int flags = (int)a5;
+#endif
+	int ret;
+
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_ret(chfs_access(path, mode), a1));
+	} else if (dirfd == AT_FDCWD && is_cwd_chfs)
+	       return (hook_ret(chfs_access(path, mode), a1));
+	else if (is_chfs_fd(&dirfd)) {
+		p = chfs_path_at(dirfd, path);
+		if (p != NULL) {
+			ret = chfs_access(p, mode);
+			free(p);
+			return (hook_ret(ret, a1));
+		}
+	}
+	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
+}
+
+static long
 hook_unlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
@@ -367,8 +443,32 @@ hook_symlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *target = (char *)a2;
 	char *linkpath = (char *)a3;
 
-	if (IS_CHFS(target)) {
+	if (IS_CHFS(linkpath)) {
 		return (hook_ret(chfs_symlink(target, linkpath), a1));
+	}
+	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
+}
+
+static long
+hook_symlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	char *target = (char *)a2;
+	int newdirfd = (int)a3;
+	char *linkpath = (char *)a4, *p;
+	int ret;
+
+	if (linkpath && linkpath[0] == '/') {
+		if (IS_CHFS(linkpath))
+			return (hook_ret(chfs_symlink(target, linkpath), a1));
+	} else if (newdirfd == AT_FDCWD && is_cwd_chfs)
+	       return (hook_ret(chfs_symlink(target, linkpath), a1));
+	else if (is_chfs_fd(&newdirfd)) {
+		p = chfs_path_at(newdirfd, linkpath);
+		if (p != NULL) {
+			ret = chfs_symlink(target, p);
+			free(p);
+			return (hook_ret(ret, a1));
+		}
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -382,6 +482,47 @@ hook_readlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (IS_CHFS(path)) {
 		return (hook_ret(chfs_readlink(path, buf, bufsize), a1));
+	}
+	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
+}
+
+static long
+hook_readlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int dirfd = (int)a2;
+	char *path = (char *)a3, *p;
+	char *buf = (char *)a4;
+	size_t bufsize = (size_t)a5;
+	int ret;
+
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_ret(
+				chfs_readlink(path, buf, bufsize), a1));
+	} else if (dirfd == AT_FDCWD && is_cwd_chfs)
+	       return (hook_ret(chfs_readlink(path, buf, bufsize), a1));
+	else if (is_chfs_fd(&dirfd)) {
+		p = chfs_path_at(dirfd, path);
+		if (p != NULL) {
+			ret = chfs_readlink(p, buf, bufsize);
+			free(p);
+			return (hook_ret(ret, a1));
+		}
+	}
+	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
+}
+
+static long
+hook_statfs(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	char *path = (char *)a2;
+#if 0
+	struct statfs *buf = (struct statfs *)a3;
+#endif
+
+	if (IS_CHFS(path)) {
+		/* XXX */
+		return (next_sys_call(a1, (long)"/", a3, a4, a5, a6, a7));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -464,11 +605,12 @@ hook_openat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	mode_t mode = (mode_t)a5;
 	int ret;
 
-	if (IS_CHFS(path))
-		return (hook_open_internal(path, flags, mode, a1));
-	else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_open_internal(path, flags, mode, a1));
+	} else if (fd == AT_FDCWD && is_cwd_chfs)
+	       return (hook_open_internal(path, flags, mode, a1));
+	else if (is_chfs_fd(&fd)) {
 		p = chfs_path_at(fd, path);
 		if (p != NULL) {
 			ret = hook_open_internal(p, flags, mode, a1);
@@ -487,11 +629,12 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	mode_t mode = (mode_t)a4;
 	int ret;
 
-	if (IS_CHFS(path))
-		return (hook_ret(chfs_mkdir(path, mode), a1));
-	else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_ret(chfs_mkdir(path, mode), a1));
+	} else if (fd == AT_FDCWD && is_cwd_chfs)
+	       return (hook_ret(chfs_mkdir(path, mode), a1));
+	else if (is_chfs_fd(&fd)) {
 		p = chfs_path_at(fd, path);
 		if (p != NULL) {
 			ret = chfs_mkdir(p, mode);
@@ -517,11 +660,12 @@ hook_unlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *path = (char *)a3, *p;
 	int flags = (int)a4, ret;
 
-	if (IS_CHFS(path))
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_unlinkat_internal(path, flags, a1));
+	} else if (fd == AT_FDCWD && is_cwd_chfs)
 		return (hook_unlinkat_internal(path, flags, a1));
-	else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
+	else if (is_chfs_fd(&fd)) {
 		p = chfs_path_at(fd, path);
 		if (p != NULL) {
 			ret = hook_unlinkat_internal(p, flags, a1);
@@ -665,11 +809,10 @@ hook_nop_at(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 	char *path = (char *)a3;
 
-	if (IS_CHFS(path))
-		return (hook_ret(0, a1));
-	else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd))
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_ret(0, a1));
+	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd))
 		return (hook_ret(0, a1));
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -737,12 +880,12 @@ hook_notsupp_at(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 	char *path = (char *)a3;
 
-	if (IS_CHFS(path)) {
-		hook_disp_notsupp(a1);
-		return (hook_ret(-ENOTSUP, a1));
-	} else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path)) {
+			hook_disp_notsupp(a1);
+			return (hook_ret(-ENOTSUP, a1));
+		}
+	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		hook_disp_notsupp(a1);
 		return (hook_ret(-ENOTSUP, a1));
 	}
@@ -757,15 +900,15 @@ hook_notsupp_at2(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd2 = (int)a4;
 	char *path2 = (char *)a5;
 
-	if (IS_CHFS(path1) || IS_CHFS(path2)) {
+	if ((path1 && path1[0] == '/' && IS_CHFS(path1)) ||
+		(path1 && path1[0] != '/' &&
+		 ((fd1 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd1)))) {
 		hook_disp_notsupp(a1);
 		return (hook_ret(-ENOTSUP, a1));
-	} else if ((path1 && path1[0] == '/') || (path2 && path2[0] == '/'))
-		;
-	else if ((path1[0] != '/' &&
-		((fd1 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd1))) ||
-		(path2[0] != '/' &&
-		((fd2 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd2)))) {
+	}
+	if ((path2 && path2[0] == '/' && IS_CHFS(path2)) ||
+		(path2 && path2[0] != '/' &&
+		 ((fd2 == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd2)))) {
 		hook_disp_notsupp(a1);
 		return (hook_ret(-ENOTSUP, a1));
 	}
@@ -793,20 +936,13 @@ hook_newfstatat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int flags = (int)a5;
 	int ret;
 
-	if (IS_CHFS(path))
-		return (hook_ret(chfs_stat(path, buf), a1));
-	else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_ret(chfs_stat(path, buf), a1));
+	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
-			if (fd == AT_FDCWD && is_cwd_chfs) {
-				p = chfs_path_at(AT_FDCWD, "");
-				if (p == NULL)
-					return (hook_ret(-1, a1));
-				ret = chfs_stat(p, buf);
-				free(p);
-				return (hook_ret(ret, a1));
-			}
+			if (fd == AT_FDCWD && is_cwd_chfs)
+				return (hook_ret(chfs_stat(".", buf), a1));
 			return (hook_ret(chfs_fstat(fd, buf), a1));
 		}
 		p = chfs_path_at(fd, path);
@@ -873,20 +1009,13 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	struct stat sb;
 	int ret;
 
-	if (IS_CHFS(path))
-		return (hook_statx_internal(path, sx, a1));
-	else if (path && path[0] == '/')
-		;
-	else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
+	if (path && path[0] == '/') {
+		if (IS_CHFS(path))
+			return (hook_statx_internal(path, sx, a1));
+	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
-			if (fd == AT_FDCWD && is_cwd_chfs) {
-				p = chfs_path_at(AT_FDCWD, "");
-				if (p == NULL)
-					return (hook_ret(-1, a1));
-				ret = hook_statx_internal(p, sx, a1);
-				free(p);
-				return (ret);
-			}
+			if (fd == AT_FDCWD && is_cwd_chfs)
+				return (hook_statx_internal(".", sx, a1));
 			ret = chfs_fstat(fd, &sb);
 			if (ret < 0)
 				return (hook_ret(ret, a1));
@@ -927,14 +1056,20 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		return (hook_lstat(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_lseek:
 		return (hook_lseek(a1, a2, a3, a4, a5, a6, a7));
+#if 0
 	case SYS_ioctl:
 		return (hook_notsupp_fd(a1, a2, a3, a4, a5, a6, a7));
+#endif
 	case SYS_pread64:
 		return (hook_pread64(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_pwrite64:
 		return (hook_pwrite64(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_readv:
+	case SYS_preadv:
+	case SYS_preadv2:
 	case SYS_writev:
+	case SYS_pwritev:
+	case SYS_pwritev2:
 		return (hook_notsupp_fd(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_access:
 		return (hook_access(a1, a2, a3, a4, a5, a6, a7));
@@ -995,8 +1130,9 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		return (hook_nop_fd(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_mknod:
 	case SYS_uselib:
-	case SYS_statfs:
 		return (hook_notsupp_path(a1, a2, a3, a4, a5, a6, a7));
+	case SYS_statfs:
+		return (hook_statfs(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_fstatfs:
 		return (hook_notsupp_fd(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_chroot:
@@ -1044,6 +1180,15 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_renameat:
 	case SYS_linkat:
 		return (hook_notsupp_at2(a1, a2, a3, a4, a5, a6, a7));
+	case SYS_symlinkat:
+		return (hook_symlinkat(a1, a2, a3, a4, a5, a6, a7));
+	case SYS_readlinkat:
+		return (hook_readlinkat(a1, a2, a3, a4, a5, a6, a7));
+	case SYS_fchmodat:
+		return (hook_nop_at(a1, a2, a3, a4, a5, a6, a7));
+	case SYS_faccessat:
+	case SYS_faccessat2:
+		return (hook_faccessat(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_statx:
 		return (hook_statx(a1, a2, a3, a4, a5, a6, a7));
 	default:
@@ -1056,6 +1201,7 @@ int
 __hook_init(long placeholder __attribute__((unused)),
 	void *sys_call_hook_ptr)
 {
+	hook_init();
 	chfs_init(NULL);
 	real_next_sys_call = *((syscall_fn_t *) sys_call_hook_ptr);
 	*((syscall_fn_t *) sys_call_hook_ptr) = hook_function;
