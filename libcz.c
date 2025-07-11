@@ -36,7 +36,7 @@ static long next_sys_call(long a1, long a2, long a3, long a4, long a5,
 	save_errno = errno;
 	_DEBUG(printf("call[%d]: %s(%ld, %ld, %ld, %ld, %ld, %ld) = %ld %s\n",
 		getpid(), syscall_string(a1), a2, a3, a4, a5, a6, a7, ret,
-		ret == -1 ? strerror(errno) : ""));
+		ret < 0 ? strerror(-ret) : ""));
 	_DEBUG(fflush(stdout));
 	_ASSERT(strcmp(syscall_string(a1), "unknown"));
 	errno = save_errno;
