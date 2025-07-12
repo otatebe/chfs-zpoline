@@ -86,6 +86,27 @@ hook_init()
 #endif
 }
 
+#include <ctype.h>
+
+static int
+is_shared_library(char *p)
+{
+	int s = strlen(p) - 1;
+
+	while (s > 0 && isdigit(p[s])) {
+		while (s > 0 && isdigit(p[s])) {
+			--s;
+		}
+		if (s > 0 && p[s] == '.')
+			--s;
+		else
+			return (0);
+	}
+	if (s > 3 && p[s] == 'o' && p[s - 1] == 's' && p[s - 2] == '.')
+		return (1);
+	return (0);
+}
+
 static int
 is_chfs_path(char *path)
 {
@@ -100,7 +121,8 @@ is_chfs_path(char *path)
 		int len = strlen(hook_dir[i]);
 
 		if (strncmp(&path[1], hook_dir[i], len) == 0 &&
-			(path[len + 1] == '\0' || path[len + 1] == '/'))
+			(path[len + 1] == '\0' || path[len + 1] == '/') &&
+			(!is_shared_library(path)))
 			return (1);
 	}
 	return (0);
