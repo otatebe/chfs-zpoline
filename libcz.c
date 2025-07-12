@@ -739,7 +739,7 @@ hook_lstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	struct stat *st = (struct stat *)a3;
 
 	if (IS_CHFS(path)) {
-		return (hook_ret(chfs_stat(path, st), a1));
+		return (hook_ret(chfs_lstat(path, st), a1));
 	}
 	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
 }
@@ -987,12 +987,13 @@ hook_copy_statx(struct statx *sx, struct stat *sb)
 }
 
 static long
-hook_statx_internal(const char *path, struct statx *sx, long a1)
+hook_statx_internal(const char *path, int flags, struct statx *sx, long a1)
 {
 	struct stat sb;
 	int ret;
 
-	ret = chfs_stat(path, &sb);
+	ret = ((flags & AT_SYMLINK_NOFOLLOW) ? chfs_lstat : chfs_stat)
+		(path, &sb);
 	if (ret < 0)
 		return (hook_ret(ret, a1));
 	hook_copy_statx(sx, &sb);
@@ -1011,11 +1012,12 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 
 	if (path && path[0] == '/') {
 		if (IS_CHFS(path))
-			return (hook_statx_internal(path, sx, a1));
+			return (hook_statx_internal(path, flags, sx, a1));
 	} else if ((fd == AT_FDCWD && is_cwd_chfs) || is_chfs_fd(&fd)) {
 		if (path == NULL && (flags & AT_EMPTY_PATH)) {
 			if (fd == AT_FDCWD && is_cwd_chfs)
-				return (hook_statx_internal(".", sx, a1));
+				return (hook_statx_internal
+						(".", flags, sx, a1));
 			ret = chfs_fstat(fd, &sb);
 			if (ret < 0)
 				return (hook_ret(ret, a1));
@@ -1025,7 +1027,7 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		p = chfs_path_at(fd, path);
 		if (p == NULL)
 			return (hook_ret(-1, a1));
-		ret = hook_statx_internal(p, sx, a1);
+		ret = hook_statx_internal(p, flags, sx, a1);
 		free(p);
 		return (ret);
 	}
