@@ -410,6 +410,60 @@ hook_pwrite64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_readv(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int fd = (int)a2;
+	struct iovec *iov = (struct iovec *)a3;
+	int iovcnt = (int)a4;
+	off_t offset = (off_t)a5;
+#if 0
+	int flags = (off_t)a6;
+#endif
+	ssize_t s = 0, ss = 0;
+	int i;
+
+	if (is_chfs_fd(&fd)) {
+		for (i = 0; i < iovcnt; ++i) {
+			s = chfs_pread(fd, iov[i].iov_base, iov[i].iov_len,
+				offset);
+			if (s > 0)
+				ss += s;
+			if (s <= 0 || s < iov[i].iov_len)
+				break;
+		}
+		return (hook_ret(s < 0 ? s : ss, a1));
+	}
+	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
+}
+
+static long
+hook_writev(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int fd = (int)a2;
+	struct iovec *iov = (struct iovec *)a3;
+	int iovcnt = (int)a4;
+	off_t offset = (off_t)a5;
+#if 0
+	int flags = (off_t)a6;
+#endif
+	ssize_t s = 0, ss = 0;
+	int i;
+
+	if (is_chfs_fd(&fd)) {
+		for (i = 0; i < iovcnt; ++i) {
+			s = chfs_pwrite(fd, iov[i].iov_base, iov[i].iov_len,
+				offset);
+			if (s > 0)
+				ss += s;
+			if (s <= 0 || s < iov[i].iov_len)
+				break;
+		}
+		return (hook_ret(s < 0 ? s : ss, a1));
+	}
+	return (next_sys_call(a1, a2, a3, a4, a5, a6, a7));
+}
+
+static long
 hook_access(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
@@ -1091,10 +1145,11 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_readv:
 	case SYS_preadv:
 	case SYS_preadv2:
+		return (hook_readv(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_writev:
 	case SYS_pwritev:
 	case SYS_pwritev2:
-		return (hook_notsupp_fd(a1, a2, a3, a4, a5, a6, a7));
+		return (hook_writev(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_access:
 		return (hook_access(a1, a2, a3, a4, a5, a6, a7));
 	case SYS_dup:
