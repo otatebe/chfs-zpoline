@@ -1,4 +1,4 @@
-# Release note for CHFS 0.9.0 (2025/7/14)
+# Release note for CHFS 0.1.0 (2025/7/14)
 
 CHFS-zpoline is a syscall interception library for [CHFS](https://github.com/otatebe/chfs.git) using [zpoline](https://github.com/yasukata/zpoline.git) to enable POSIX access.
 
