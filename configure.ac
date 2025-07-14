@@ -1,6 +1,8 @@
 AC_PREREQ([2.69])
-AC_INIT([cz] [0.1], [miyauchi@hpcs.cs.tsukuba.ac.jp])
+AC_INIT([CHFS-zpoline], [0.1.0], [miyauchi@hpcs.cs.tsukuba.ac.jp])
 AM_INIT_AUTOMAKE([foreign subdir-objects])
+AC_CONFIG_SRCDIR([libcz.c])
+AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIRS([m4])
 
 AC_CONFIG_COMMANDS([init_submodules],

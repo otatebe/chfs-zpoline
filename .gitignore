@@ -4,6 +4,7 @@ compile
 *.log
 *.status
 *.sub
+config.h.in
 configure
 configure~
 depcomp
