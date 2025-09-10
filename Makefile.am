@@ -11,3 +11,6 @@ $(top_srcdir)/syscall_string.c: $(top_srcdir)/syscall_string.sh /usr/include/x86
 install-exec-hook:
 	make -C $(top_srcdir)/zpoline
 	$(INSTALL) -m 755 $(top_srcdir)/zpoline/libzpoline.so $(prefix)/lib/
+
+clean-local:
+	make -C $(top_srcdir)/zpoline clean
