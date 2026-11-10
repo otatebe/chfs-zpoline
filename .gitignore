@@ -20,5 +20,6 @@ build
 .deps
 .libs
 autom4te.cache
-m4
+m4/*
+!m4/.gitkeep
 syscall_string.c
